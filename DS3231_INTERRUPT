@@ -1,0 +1,55 @@
+#include <Wire.h>
+#include <RTClib.h>
+
+RTC_DS3231 rtc;
+
+void setup() {
+    Serial.begin(115200);
+    Wire.begin();
+
+    if (!rtc.begin()) {
+        Serial.println("RTC 찾을 수 없음");
+        while (1);
+    }
+
+    if (rtc.lostPower()) {
+        Serial.println("RTC 시간 초기화됨!");
+        rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    }
+
+    // 현재 시간 가져오기
+    delay(1000);
+    digitalWrite(3, HIGH);
+    delay(3000);
+    DateTime now = rtc.now();
+    
+    DateTime alarmTime = now + TimeSpan(0, 0, 0, 5); // 30초 후 알람 설정
+    
+    // Alarm 1 설정 (시, 분, 초 일치 시 트리거)
+    rtc.setAlarm1(alarmTime, DS3231_A1_Date); // DS3231_A1_Date 사용
+    
+    
+    rtc.clearAlarm(1); // 기존 알람 클리어
+    rtc.disableAlarm(2); // Alarm 2 비활성화
+    
+    rtc.writeSqwPinMode(DS3231_OFF); // SQW 핀 끄기
+
+    Serial.println("Alarm 설정 완료!");
+}
+
+void loop() {
+    if (rtc.alarmFired(1)) {
+        Serial.println("알람 발생! /INT 핀 LOW");
+        
+        // 알람 클리어 (INT 핀이 HIGH로 복귀)
+        rtc.clearAlarm(1);
+
+        // 새로운 알람 설정 (현재 시간 기준 30초 후)
+        DateTime now = rtc.now();
+        DateTime nextAlarm = now + TimeSpan(0, 0, 0, 5);
+        
+        rtc.setAlarm1(nextAlarm, DS3231_A1_Date); // DS3231_A1_Date 사용
+        Serial.println("새로운 알람 30초 후 설정됨");
+    }
+    delay(500);
+}
