@@ -1,0 +1,87 @@
+#include <Wire.h>
+#include <RTClib.h>
+#include <LowPower.h>
+
+RTC_DS3231 rtc;
+
+// 핀 정의
+#define LED_PIN     13
+#define MOTOR_PIN   12
+#define ALARM_INT_PIN 2  // DS3231의 INT/SQW 핀
+
+volatile bool wakeUpFlag = false;
+
+// DS3231의 알람 INT 핀이 FALLING 엣지에서 호출되는 인터럽트 서비스 루틴
+void wakeUpISR() {
+  wakeUpFlag = true;
+}
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin();
+
+  // 출력 핀 설정
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(MOTOR_PIN, OUTPUT);
+  
+  // DS3231 INT 핀 설정 (내부 풀업 사용)
+  pinMode(ALARM_INT_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(ALARM_INT_PIN), wakeUpISR, FALLING);
+
+  if (!rtc.begin()) {
+    Serial.println("RTC 찾을 수 없음");
+    while (1);
+  }
+
+  // RTC 전원 손실 시 시간 재설정
+  if (rtc.lostPower()) {
+    Serial.println("RTC 전원 손실! 시간 초기화됨.");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+
+  // Alarm2는 사용하지 않으므로 비활성화하고, SQW 핀 출력도 OFF
+  rtc.disableAlarm(2);
+  rtc.writeSqwPinMode(DS3231_OFF);
+
+  // 초기 알람 설정: 현재 시간 기준 10초 후
+  DateTime now = rtc.now();
+  DateTime alarmTime = now + TimeSpan(0, 0, 0, 10);
+  rtc.setAlarm1(alarmTime, DS3231_A1_Date);  // 시, 분, 초, 일치 시 알람 발생
+  rtc.clearAlarm(1);
+
+  Serial.println("알람 설정 완료 - 슬립모드로 진입");
+}
+
+void loop() {
+  // 슬립모드 진입: 외부 인터럽트(DS3231 알람 INT)에 의해 깨어남
+  LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
+
+  // 슬립에서 깨어나면, RTC 알람이 발생했는지 확인
+  if (rtc.alarmFired(1)) {
+    Serial.println("알람 발생! 깨어남");
+
+    // 작동하기: LED 깜빡임 (200ms 간격 3회)
+    for (int i = 0; i < 3; i++) {
+      digitalWrite(LED_PIN, HIGH);
+      delay(200);
+      digitalWrite(LED_PIN, LOW);
+      delay(200);
+    }
+    
+    // 작동하기: 모터 작동 (예시로 1초간 HIGH 출력)
+    digitalWrite(MOTOR_PIN, HIGH);
+    delay(1000);
+    digitalWrite(MOTOR_PIN, LOW);
+
+    // 알람 플래그 클리어
+    rtc.clearAlarm(1);
+
+    // 다음 알람 설정: 현재 시간 기준 10초 후
+    DateTime now = rtc.now();
+    DateTime nextAlarm = now + TimeSpan(0, 0, 0, 10);
+    rtc.setAlarm1(nextAlarm, DS3231_A1_Date);
+    Serial.println("새로운 알람 설정 - 다시 슬립모드 진입");
+  }
+
+  wakeUpFlag = false;
+}
