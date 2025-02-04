@@ -1,0 +1,117 @@
+모니터완성코드
+#include <WiFi.h>
+#include <esp_wifi.h>
+#include <esp_now.h>
+
+#define MAX_DEVICES 1
+#define RANDOM_INTERVAL 3000  // 3초마다 실행
+
+// 📌 1번 Device의 MAC 주소 저장
+uint8_t deviceMacAddressList[MAX_DEVICES][6] = {
+    {0x24, 0x6F, 0x28, 0xAB, 0xCD, 0xEF}  // 1번 Device
+};
+
+uint8_t deviceStates[MAX_DEVICES] = {0};  // 초기 상태 (OFF)
+
+// 📌 Peer 등록 여부 (한 번만 등록하면 됨)
+bool peerRegistered[MAX_DEVICES] = {false};
+
+//------------------------------------------------------------------------------
+// 📌 (1) Peer 등록 함수 (Monitor가 Device에게 송신하려면 필요)
+//------------------------------------------------------------------------------
+void RegisterPeer(int deviceIndex) {
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(peerInfo.peer_addr, deviceMacAddressList[deviceIndex], 6);
+    peerInfo.channel = 0;
+    peerInfo.encrypt = false;
+
+    if (esp_now_add_peer(&peerInfo) == ESP_OK) {
+        Serial.println("Device " + String(deviceIndex + 1) + " 피어 등록 완료");
+        peerRegistered[deviceIndex] = true;
+    } else {
+        Serial.println("Device " + String(deviceIndex + 1) + " 피어 등록 실패!");
+    }
+}
+
+//------------------------------------------------------------------------------
+// 📌 (2) OnDataRecv: Device에서 OFF(0) 신호를 수신하면 상태 업데이트
+//------------------------------------------------------------------------------
+void OnDataRecv(const esp_now_recv_info_t *recvInfo, const uint8_t *data, int len) {
+    for (int i = 0; i < MAX_DEVICES; i++) {
+        if (memcmp(deviceMacAddressList[i], recvInfo->src_addr, 6) == 0) {
+            if (*data == 0) {
+                deviceStates[i] = 0;  // OFF 상태 업데이트
+                Serial.println("Device " + String(i + 1) + " → OFF");
+            }
+            break;
+        }
+    }
+}
+
+//------------------------------------------------------------------------------
+// 📌 (3) 3초마다 OFF된 기기 중 하나를 랜덤 선택하여 ON 신호 전송
+//------------------------------------------------------------------------------
+void SelectRandomDeviceAndTurnOn() {
+    int offDevices[MAX_DEVICES];
+    int offCount = 0;
+
+    // OFF 상태인 기기 찾기
+    for (int i = 0; i < MAX_DEVICES; i++) {
+        if (deviceStates[i] == 0) {
+            offDevices[offCount++] = i;
+        }
+    }
+
+    // 랜덤 선택 후 ON 신호 전송
+    if (offCount > 0) {
+        int randomIndex = random(offCount);
+        int deviceIndex = offDevices[randomIndex];
+
+        // 피어 등록이 안 된 경우 먼저 등록
+        if (!peerRegistered[deviceIndex]) {
+            RegisterPeer(deviceIndex);
+        }
+
+        uint8_t msg = 1;
+        esp_now_send(deviceMacAddressList[deviceIndex], &msg, sizeof(msg));  // ON 신호 전송
+        deviceStates[deviceIndex] = 1;  // 상태 ON으로 갱신
+        Serial.println("Device " + String(deviceIndex + 1) + " → ON");
+    }
+}
+
+//------------------------------------------------------------------------------
+// 📌 (4) setup(): ESP-NOW 초기화 및 피어 등록
+//------------------------------------------------------------------------------
+void setup() {
+    Serial.begin(115200);
+    WiFi.mode(WIFI_STA);  // ESP-NOW 사용 시 STA 모드 필요
+
+    // 📌 ESP-NOW 초기화
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("ESP-NOW 초기화 실패!");
+        return;
+    }
+
+    // 📌 데이터 수신 콜백 등록
+    esp_now_register_recv_cb(OnDataRecv);
+
+    // 📌 1번 Device 피어 등록
+    for (int i = 0; i < MAX_DEVICES; i++) {
+        RegisterPeer(i);
+    }
+
+    randomSeed(analogRead(0));
+}
+
+//------------------------------------------------------------------------------
+// 📌 (5) loop(): 3초마다 OFF된 기기 중 하나를 랜덤 선택하여 ON 신호 전송
+//------------------------------------------------------------------------------
+void loop() {
+    static unsigned long lastUpdateTime = 0;
+    unsigned long currentMillis = millis();
+
+    if (currentMillis - lastUpdateTime >= RANDOM_INTERVAL) {
+        lastUpdateTime = currentMillis;
+        SelectRandomDeviceAndTurnOn();
+    }
+}
