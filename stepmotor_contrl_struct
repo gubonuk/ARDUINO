@@ -9,19 +9,21 @@ struct StepperMotor {
     AccelStepper stepper;
     int enablePin;
 
-    // 초기화 함수
-    void init(int maxSpeed, int acceleration, int targetPosition) {
+    // 초기화 함수 (속도 및 가속도만 설정)
+    void init(int maxSpeed, int acceleration) {
         pinMode(enablePin, OUTPUT);
         digitalWrite(enablePin, LOW); // 모터 활성화
 
         stepper.setMaxSpeed(maxSpeed);
         stepper.setAcceleration(acceleration);
-        stepper.moveTo(targetPosition);
     }
 
-    // 실행 함수 (루프에서 호출)
-    void runMotor() {
-        stepper.run();
+    // 목표 위치로 이동 + 실행
+    void moveAndRun(long targetPosition) {
+        stepper.moveTo(targetPosition);
+        while (stepper.distanceToGo() != 0) {
+            stepper.run();
+        }
     }
 };
 
@@ -29,9 +31,10 @@ struct StepperMotor {
 StepperMotor myMotor = {AccelStepper(AccelStepper::DRIVER, PUL_PIN, DIR_PIN), EN_PIN};
 
 void setup() {
-    myMotor.init(500, 250, 2000);
+    myMotor.init(500, 250);  // 속도와 가속도만 설정
+    myMotor.moveAndRun(2000); // 목표 위치로 이동 후 완료될 때까지 실행
 }
 
 void loop() {
-    myMotor.runMotor();
+    // 필요 시 추가적인 이동 명령 실행 가능
 }
