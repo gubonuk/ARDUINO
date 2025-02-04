@@ -1,0 +1,37 @@
+#include <AccelStepper.h>
+
+#define PUL_PIN 8
+#define DIR_PIN 9
+#define EN_PIN 10
+
+// 스테퍼 모터 구조체 정의
+struct StepperMotor {
+    AccelStepper stepper;
+    int enablePin;
+
+    // 초기화 함수
+    void init(int maxSpeed, int acceleration, int targetPosition) {
+        pinMode(enablePin, OUTPUT);
+        digitalWrite(enablePin, LOW); // 모터 활성화
+
+        stepper.setMaxSpeed(maxSpeed);
+        stepper.setAcceleration(acceleration);
+        stepper.moveTo(targetPosition);
+    }
+
+    // 실행 함수 (루프에서 호출)
+    void runMotor() {
+        stepper.run();
+    }
+};
+
+// 구조체 인스턴스 생성
+StepperMotor myMotor = {AccelStepper(AccelStepper::DRIVER, PUL_PIN, DIR_PIN), EN_PIN};
+
+void setup() {
+    myMotor.init(500, 250, 2000);
+}
+
+void loop() {
+    myMotor.runMotor();
+}
