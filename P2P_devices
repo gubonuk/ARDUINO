@@ -1,0 +1,106 @@
+#include <WiFi.h>
+#include <esp_wifi.h>
+#include <esp_now.h>
+
+#define LED_PIN 2       // LED 연결 핀
+#define BUTTON_PIN 4    // 버튼 핀 (풀다운 방식: 눌림 시 HIGH)
+
+// 📌 1번 Device의 STA MAC 주소 설정
+uint8_t myMacAddress[6] = {0x24, 0x6F, 0x28, 0x12, 0x34, 0x56};
+
+// 📌 Monitor의 MAC 주소 저장 공간
+uint8_t monitorMacAddress[6];  
+
+// 📌 LED 상태 (0=OFF, 1=ON)
+uint8_t ledState = 0;
+
+// 📌 Monitor와의 피어 등록 여부 (한 번만 등록)
+bool peerRegistered = false;
+
+//------------------------------------------------------------------------------
+// 📌 (1) OnDataRecv: Monitor에서 데이터 수신 시 호출
+//     - Monitor MAC 주소 저장
+//     - 수신 값이 1이면 LED 켜기
+//     - Peer 등록 (Monitor MAC을 통해 Device → Monitor 송신 가능)
+//------------------------------------------------------------------------------
+void OnDataRecv(const esp_now_recv_info_t *recvInfo, const uint8_t *data, int len) {
+    // Monitor MAC 주소 저장
+    memcpy(monitorMacAddress, recvInfo->src_addr, 6);
+
+    // 수신 데이터 확인 (1이면 LED ON)
+    if (*data == 1 && ledState == 0) {
+        digitalWrite(LED_PIN, HIGH);
+        ledState = 1;
+    }
+
+    // 📌 Monitor MAC이 새로 들어왔을 때 Peer 등록 (한 번만 등록)
+    if (!peerRegistered) {
+        esp_now_peer_info_t peerInfo = {};
+        memcpy(peerInfo.peer_addr, monitorMacAddress, 6);
+        peerInfo.channel = 0;     
+        peerInfo.encrypt = false; 
+
+        if (esp_now_add_peer(&peerInfo) == ESP_OK) {
+            Serial.println("Monitor 피어 등록 완료");
+            peerRegistered = true;
+        } else {
+            Serial.println("Monitor 피어 등록 실패!");
+        }
+    }
+}
+
+//------------------------------------------------------------------------------
+// 📌 (2) setup(): STA MAC 설정, ESP-NOW 초기화, 콜백 등록, GPIO 초기화
+//------------------------------------------------------------------------------
+void setup() {
+    Serial.begin(115200);
+
+    // 📌 (2-1) STA 모드 설정 및 Wi-Fi 시작 후 MAC 주소 변경
+    WiFi.mode(WIFI_STA);
+    esp_wifi_start();  // Wi-Fi 인터페이스 활성화
+    
+    // 📌 (2-2) STA MAC 주소 변경
+    esp_err_t err = esp_wifi_set_mac(WIFI_IF_STA, myMacAddress);
+    if (err == ESP_OK) {
+        Serial.print("STA MAC 주소 설정 성공: ");
+    } else {
+        Serial.printf("STA MAC 주소 설정 실패 (err=0x%X)\n", err);
+    }
+
+    // 📌 (2-3) 설정된 MAC 주소 확인
+    uint8_t checkMac[6];
+    esp_wifi_get_mac(WIFI_IF_STA, checkMac);
+    Serial.printf("STA MAC: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                  checkMac[0], checkMac[1], checkMac[2],
+                  checkMac[3], checkMac[4], checkMac[5]);
+
+    // 📌 (2-4) ESP-NOW 초기화
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("ESP-NOW 초기화 실패!");
+        return;
+    }
+
+    // 📌 (2-5) 데이터 수신 콜백 등록 (Monitor에서 데이터 수신 시 OnDataRecv() 호출)
+    esp_now_register_recv_cb(OnDataRecv);
+
+    // 📌 (2-6) GPIO 초기화
+    pinMode(LED_PIN, OUTPUT);
+    pinMode(BUTTON_PIN, INPUT);  // 풀다운: 눌리면 HIGH
+    digitalWrite(LED_PIN, LOW);  // 초기 LED 상태 OFF
+}
+
+//------------------------------------------------------------------------------
+// 📌 (3) loop(): 버튼이 눌리면 OFF(0) 신호를 Monitor에 전송
+//------------------------------------------------------------------------------
+void loop() {
+    // 버튼이 HIGH 이고, 현재 LED가 ON(1) 상태라면 -> OFF 전송
+    if (digitalRead(BUTTON_PIN) == HIGH && ledState == 1) {
+        // 📌 Monitor에게 OFF(0) 신호 전송
+        uint8_t msg = 0;
+        esp_now_send(monitorMacAddress, &msg, sizeof(msg));
+
+        // 📌 LED 끄기
+        digitalWrite(LED_PIN, LOW);
+        ledState = 0;
+    }
+}
