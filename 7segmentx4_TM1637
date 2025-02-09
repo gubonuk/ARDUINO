@@ -1,0 +1,21 @@
+#include <TM1637Display.h>
+
+// 핀 설정
+#define CLK 3  // 클럭 핀
+#define DIO 2  // 데이터 핀
+
+// TM1637 디스플레이 객체 생성
+TM1637Display display(CLK, DIO);
+
+void setup() {
+    display.setBrightness(7);  // 밝기 설정 (0~7)
+    display.showNumberDec(1234); // 초기 숫자 출력
+    delay(2000);
+}
+
+void loop() {
+    for (int i = 0; i <= 9999; i++) {
+        display.showNumberDec(i); // 숫자 출력
+        delay(500); // 0.5초 간격
+    }
+}
