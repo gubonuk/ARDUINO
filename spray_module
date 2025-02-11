@@ -1,0 +1,243 @@
+#include <AccelStepper.h>
+#include <TM1637Display.h>
+#include <Wire.h>
+#include <RTClib.h>
+#include <LowPower.h>
+
+// ------------------ 핀 정의 ------------------
+#define PUL_PIN     8    // 스텝모터 PUL 핀
+#define DIR_PIN     9    // 스텝모터 DIR 핀
+#define EN_PIN      10   // 스텝모터 ENABLE 핀
+
+#define CLK_PIN     4    // TM1637 클럭 핀
+#define DIO_PIN     7    // TM1637 데이터 핀
+
+#define DIAL_P_PIN  A0   // P 다이얼 (Display용, 내부 매핑용)
+#define DIAL_S_PIN  A1   // S 다이얼 (Display용, 내부 매핑용)
+
+#define ALARM_INT_PIN 2  // DS3231의 INT/SQW 핀 (인터럽트)
+#define RELAY_PIN     3  // 12V 전원 인가용 릴레이 핀
+
+// ------------------ 매핑 배열 ------------------
+// P 다이얼 : 1~4 → 200, 400, 600, 800 (스텝모터 이동량)
+const int P_MAPPING[4] = {200, 400, 600, 800};
+// S 다이얼 : 1~4 → 5, 10, 15, 20 (RTC 알람/슬립 시간: 초)
+const int S_MAPPING[4] = {5, 10, 15, 20};
+
+// ------------------ 스텝모터 정의 ------------------
+struct StepperMotor {
+  AccelStepper stepper;
+  int enablePin;
+  
+  // 초기화 (최대 속도, 가속도 설정)
+  void init(int maxSpeed, int acceleration) {
+    pinMode(enablePin, OUTPUT);
+    digitalWrite(enablePin, LOW); // 모터 활성화
+    stepper.setMaxSpeed(maxSpeed);
+    stepper.setAcceleration(acceleration);
+  }
+  
+  // 목표 위치로 이동 (절대 위치 기반) + 디버깅 출력
+  void moveAndRun(long targetPosition) {
+    Serial.print("[Stepper Debug] 현재 위치: ");
+    Serial.print(stepper.currentPosition());
+    Serial.print(" -> 목표 위치: ");
+    Serial.println(targetPosition);
+    stepper.moveTo(targetPosition);
+    while (stepper.distanceToGo() != 0) {
+      stepper.run();
+    }
+    Serial.print("[Stepper Debug] 최종 위치: ");
+    Serial.println(stepper.currentPosition());
+  }
+};
+
+// 스텝모터 인스턴스 생성
+StepperMotor myMotor = {AccelStepper(AccelStepper::DRIVER, PUL_PIN, DIR_PIN), EN_PIN};
+
+// ------------------ TM1637 디스플레이 정의 ------------------
+TM1637Display display(CLK_PIN, DIO_PIN);
+
+// ------------------ RTC 정의 ------------------
+RTC_DS3231 rtc;
+
+// ------------------ 전역 변수 ------------------
+volatile bool wakeUpFlag = false;  // 인터럽트에 의해 설정
+
+// ------------------ 함수 선언 ------------------
+
+// DS3231 알람 INT 인터럽트 서비스 루틴
+void wakeUpISR() {
+  wakeUpFlag = true;
+}
+
+// 다이얼 값을 읽어 1~4 범위의 값으로 매핑 (정수)
+void ReadDial(int &dialP, int &dialS) {
+  int sensorP = analogRead(DIAL_P_PIN);
+  int sensorS = analogRead(DIAL_S_PIN);
+  dialP = sensorP * 4 / 1024 + 1;
+  dialS = sensorS * 4 / 1024 + 1;
+}
+
+// TM1637에 "P?S?" 형식으로 표시 (각 자리: 'P' 또는 'S'와 1~4)
+// 'P', 'S'의 세그먼트 코드와 숫자 1~4의 코드를 사용
+void ShowDisplayPxSx(int dialP, int dialS) {
+  const uint8_t SEG_P = 0b01110011; // 'P'
+  const uint8_t SEG_S = 0b01101101; // 'S'
+  const uint8_t NUMS[4] = {
+    0b00000110, // 1
+    0b01011011, // 2
+    0b01001111, // 3
+    0b01100110  // 4
+  };
+  uint8_t segs[4] = { SEG_P, NUMS[dialP - 1], SEG_S, NUMS[dialS - 1] };
+  display.setSegments(segs);
+}
+
+// 내부 매핑 값 반환 (다이얼 값에 따른 스텝모터 이동량 또는 RTC 알람 시간)
+int getPMapping(int dialP) {
+  return P_MAPPING[dialP - 1];
+}
+int getSMapping(int dialS) {
+  return S_MAPPING[dialS - 1];
+}
+
+// DS3231 RTC 알람을 현재 시각 + secondsOffset (초)로 설정
+void setRTCAlarm(int secondsOffset) {
+  DateTime now = rtc.now();
+  DateTime alarmTime = now + TimeSpan(0, 0, 0, secondsOffset);
+  rtc.clearAlarm(1);
+  // DS3231_A1_Date 모드 사용 (시, 분, 초 일치 시 알람 발생)
+  rtc.setAlarm1(alarmTime, DS3231_A1_Date);
+  Serial.print("[RTC Debug] 새로운 알람 시간 설정: ");
+  Serial.print(alarmTime.hour());
+  Serial.print(":");
+  Serial.print(alarmTime.minute());
+  Serial.print(":");
+  Serial.println(alarmTime.second());
+}
+
+// 스텝모터를 지정 스텝만큼 전진 후 원상복귀 (양방향 이동) + 디버깅 출력
+void performMotorAction(int steps) {
+  long origPos = myMotor.stepper.currentPosition();
+  Serial.print("[Motor Debug] 원래 위치: ");
+  Serial.println(origPos);
+  Serial.print("[Motor Debug] 전진할 스텝 수: ");
+  Serial.println(steps);
+  myMotor.moveAndRun(origPos + steps);  // 전진
+  Serial.print("[Motor Debug] 원상복귀할 위치: ");
+  Serial.println(origPos);
+  myMotor.moveAndRun(origPos);            // 원위치 복귀
+}
+
+// RTC 및 관련 알람, DS3231 인터럽트, 릴레이 설정 등 초기화를 수행하는 함수
+void initRTCAndPeripherals() {
+  Serial.println("RTC 초기화 시작");
+  
+  if (!rtc.begin()) {
+    Serial.println("RTC를 찾을 수 없습니다.");
+    while (1);
+  }
+  
+  if (rtc.lostPower()) {
+    Serial.println("RTC 전원 손실 - 시간 재설정");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+  
+  // 사용하지 않는 Alarm2 비활성화 및 SQW 출력 OFF
+  rtc.disableAlarm(2);
+  rtc.writeSqwPinMode(DS3231_OFF);
+  
+  // 초기 알람 예약 (예: 현재 시각 기준 S 다이얼 매핑에 따른 시간, 여기선 우선 5초로 설정)
+  setRTCAlarm(5);
+  rtc.clearAlarm(1);
+  
+  Serial.println("RTC 초기화 및 알람 설정 완료");
+}
+
+// ------------------ setup() ------------------
+void setup() {
+  Serial.begin(115200);
+  Wire.begin();
+  
+  // 출력 핀 설정 (LED, 모터, 릴레이)
+  // 기존 핀: LED는 TM1637의 내부가 아니므로 별도 처리 없음.
+  // 스텝모터 핀은 StepperMotor 내부에서 처리됨.
+  pinMode(RELAY_PIN, OUTPUT);
+  
+  // DS3231 알람 INT 핀 설정 (내부 풀업 사용)
+  pinMode(ALARM_INT_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(ALARM_INT_PIN), wakeUpISR, FALLING);
+  
+  // 스텝모터 초기화
+  myMotor.init(500, 250);
+  
+  // TM1637 디스플레이 밝기 설정
+  display.setBrightness(7);
+  
+  // 초기 다이얼 읽기 및 디스플레이 업데이트
+  int dialP, dialS;
+  ReadDial(dialP, dialS);
+  ShowDisplayPxSx(dialP, dialS);
+  
+  // RTC 및 알람 초기화
+  initRTCAndPeripherals();
+}
+
+// ------------------ loop() ------------------
+void loop() {
+  int dialP, dialS;
+  
+  // 다이얼 값 갱신 및 Display 업데이트 (슬립 전 최신 상태 반영)
+  ReadDial(dialP, dialS);
+  ShowDisplayPxSx(dialP, dialS);
+  
+  // DS3231 알람 INT를 통해 슬립 모드 진입 (외부 인터럽트 발생 시 깨어남)
+  LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF);
+  
+  // 슬립 모드에서 깨어나면 RTC 알람 발생 여부 확인
+  if (rtc.alarmFired(1)) {
+    Serial.println("[RTC Debug] RTC 알람 발생! 깨어남");
+    
+    // 릴레이 동작: RELAY_PIN(3번)을 HIGH로 만들어 12V 전원 인가, 2초 대기 후 LOW
+    digitalWrite(RELAY_PIN, HIGH);
+    delay(2000);
+    
+    
+    // 최신 다이얼 값 다시 읽어 Display 업데이트
+    ReadDial(dialP, dialS);
+    ShowDisplayPxSx(dialP, dialS);
+
+    
+    
+    // 내부 매핑 값 획득
+    int pSteps = getPMapping(dialP);
+    int sSeconds = getSMapping(dialS);
+    
+    // 스텝모터 동작: 지정 스텝만큼 전진 후 원상복귀
+    performMotorAction(pSteps);
+    
+
+    digitalWrite(RELAY_PIN, LOW);
+    // 지정 초 동안 대기 (여기서는 delay로 처리)
+    Serial.print("[Sleep Debug] 슬립 모드: ");
+    Serial.print(sSeconds);
+    Serial.println(" 초");
+    delay(sSeconds * 1000);
+    
+    
+    // 새로운 RTC 알람 설정 (현재 S 다이얼 매핑값 사용)
+    sSeconds = getSMapping(dialS);
+    setRTCAlarm(sSeconds);
+    Serial.print("[RTC Debug] 새로운 알람 설정 완료. (Motor 이동량: ");
+    Serial.print(pSteps);
+    Serial.print(" / 알람 시간: ");
+    Serial.print(sSeconds);
+    Serial.println(" 초)");
+
+    
+  }
+  
+  // 짧은 루프 딜레이 (과도한 폴링 방지)
+  delay(200);
+}
