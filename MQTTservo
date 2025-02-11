@@ -1,0 +1,83 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ESP32Servo.h>  // ESP32 전용 서보 라이브러리
+
+const int SERVO_PIN = 19;  // MG995 서보모터 핀
+Servo myServo;
+
+// WiFi 및 MQTT 정보
+const char* ssid = "bonukii";
+const char* pass = "1504687g";
+const char* mqttServer = "192.168.0.14"; // 라즈베리파이 IP
+const int   mqttPort   = 1883;
+const char* mqttUser   = "myusername";
+const char* mqttPass   = "1234";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+// 콜백 함수 (MQTT 메시지 수신 시 실행)
+void callback(char* topic, byte* payload, unsigned int length) {
+  String msg;
+  for (int i = 0; i < length; i++) {
+    msg += (char)payload[i];
+  }
+  Serial.print("[수신] 토픽: ");
+  Serial.println(topic);
+  Serial.print("[수신] 메시지: ");
+  Serial.println(msg);
+
+  int angle = msg.toInt();
+  if (angle >= 1 && angle <= 179) {
+    myServo.write(angle);
+    Serial.print("[동작] 서보모터 이동: ");
+    Serial.print(angle);
+    Serial.println("도");
+  }
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    Serial.println("[MQTT] 브로커 연결 시도...");
+    if (client.connect("ESP32Client", mqttUser, mqttPass)) {
+      Serial.println("[MQTT] 연결 성공!");
+      client.subscribe("cmd/servo");
+      Serial.println("[MQTT] cmd/servo 토픽 구독 완료");
+    } else {
+      Serial.print("[MQTT] 연결 실패, 에러코드: ");
+      Serial.print(client.state());
+      Serial.println(" (2초 후 재시도)");
+      delay(2000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  
+  myServo.setPeriodHertz(50); // MG995 서보모터는 50Hz PWM 사용
+  myServo.attach(SERVO_PIN, 500, 2500); // 500~2500us 범위에서 동작
+
+  myServo.write(90);  // 초기 위치 (90도)
+
+  Serial.println("[WiFi] 연결 중...");
+  WiFi.begin(ssid, pass);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\n[WiFi] 연결 성공");
+  Serial.print("[WiFi] IP 주소: ");
+  Serial.println(WiFi.localIP());
+
+  client.setServer(mqttServer, mqttPort);
+  client.setCallback(callback);
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop();
+}
