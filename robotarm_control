@@ -1,0 +1,140 @@
+#include <Servo.h>
+
+// 버튼 핀 정의 (서보3, 서보4, 서보5 제어용)
+#define BUTTON_UP 2      // 서보3 (-) 방향
+#define BUTTON_RIGHT 3   // 서보4 (+) 방향
+#define BUTTON_DOWN 4    // 서보3 (+) 방향
+#define BUTTON_LEFT 5    // 서보4 (-) 방향
+#define BUTTON_E 6       // 서보5 (-) 방향
+#define BUTTON_F 7       // 서보5 (+) 방향
+
+// 조이스틱 핀 정의 (서보1, 서보2 제어용)
+#define Joy_X A0  // X축 (서보1 제어)
+#define Joy_Y A1  // Y축 (서보2 제어)
+
+// 서보모터 핀 정의
+#define SERVO_1 10  // 조이스틱 X축 (좌우 회전)
+#define SERVO_2 11  // 조이스틱 Y축 (앞뒤 회전)
+#define SERVO_3 12  // 버튼 UP/DOWN으로 제어
+#define SERVO_4 13  // 버튼 LEFT/RIGHT으로 제어
+#define SERVO_5 9   // 버튼 E/F로 제어
+
+Servo servo1, servo2, servo3, servo4, servo5;
+
+// 서보모터 초기 각도
+float angle1 = 90;  // 서보1 (좌우)
+float angle2 = 90;  // 서보2 (앞뒤)
+int angle3 = 90;    // 서보3 (버튼 제어)
+int angle4 = 90;    // 서보4 (버튼 제어)
+int angle5 = 90;    // 서보5 (버튼 제어)
+
+// 조이스틱 입력 범위 및 속도
+const int CENTER = 510;  // 조이스틱 중앙값
+const int DEADZONE = 20; // 움직임이 없는 범위
+
+const float MAX_SPEED_SLOW = 0.7; // 서보1,2 속도 줄이기 (초당 최대 0.7도 이동)
+const float MAX_SPEED_FAST = 2.0; // 서보3,4,5 속도 높이기 (초당 최대 2.0도 이동)
+
+const int SERVO_STEP_FAST = 3;  // 버튼 서보 이동 단위 증가 (기존 1 → 3)
+const int DELAY_TIME_SLOW = 40; // 서보1,2 속도 조절 (기존 20 → 40)
+const int DELAY_TIME_FAST = 10; // 서보3,4,5 속도 증가 (기존 20 → 10)
+
+// 마지막 업데이트 시간
+unsigned long prevTime = 0;
+
+void setup() {
+    Serial.begin(9600);
+
+    // 버튼을 입력 모드로 설정 (내부 풀업 저항 사용)
+    pinMode(BUTTON_UP, INPUT_PULLUP);
+    pinMode(BUTTON_RIGHT, INPUT_PULLUP);
+    pinMode(BUTTON_DOWN, INPUT_PULLUP);
+    pinMode(BUTTON_LEFT, INPUT_PULLUP);
+    pinMode(BUTTON_E, INPUT_PULLUP);
+    pinMode(BUTTON_F, INPUT_PULLUP);
+
+    // 서보모터 초기화
+    servo1.attach(SERVO_1);
+    servo2.attach(SERVO_2);
+    servo3.attach(SERVO_3);
+    servo4.attach(SERVO_4);
+    servo5.attach(SERVO_5);
+
+    // 초기 각도 설정
+    servo1.write(angle1);
+    servo2.write(angle2);
+    servo3.write(angle3);
+    servo4.write(angle4);
+    servo5.write(angle5);
+}
+
+void loop() {
+    unsigned long currentTime = millis();
+    float deltaTime = (currentTime - prevTime) / 1000.0;  // 초 단위 변환
+
+    if (deltaTime >= 0.05) {  // 50ms마다 업데이트
+        prevTime = currentTime;
+
+        // 🎮 조이스틱 입력 읽기
+        int joyX = analogRead(Joy_X);
+        int joyY = analogRead(Joy_Y);
+
+        // 서보1 (X축) 속도 계산 (속도 낮춤)
+        if (abs(joyX - CENTER) > DEADZONE) {
+            float speedX = map(joyX, 0, 1023, -MAX_SPEED_SLOW * 100, MAX_SPEED_SLOW * 100) / 100.0;
+            angle1 += speedX * deltaTime * 100;
+        }
+
+        // 서보2 (Y축) 속도 계산 (속도 낮춤)
+        if (abs(joyY - CENTER) > DEADZONE) {
+            float speedY = map(joyY, 0, 1023, -MAX_SPEED_SLOW * 100, MAX_SPEED_SLOW * 100) / 100.0;
+            angle2 += speedY * deltaTime * 100;
+        }
+
+        // 각도 제한 (0~180도)
+        angle1 = constrain(angle1, 0, 180);
+        angle2 = constrain(angle2, 0, 180);
+
+        // 🎮 버튼 입력 확인 (서보3, 서보4, 서보5 제어 - 속도 높임)
+        bool upPressed = digitalRead(BUTTON_UP) == LOW;
+        bool rightPressed = digitalRead(BUTTON_RIGHT) == LOW;
+        bool downPressed = digitalRead(BUTTON_DOWN) == LOW;
+        bool leftPressed = digitalRead(BUTTON_LEFT) == LOW;
+        bool ePressed = digitalRead(BUTTON_E) == LOW;
+        bool fPressed = digitalRead(BUTTON_F) == LOW;
+
+        if (upPressed) angle3 = constrain(angle3 - SERVO_STEP_FAST, 0, 180); // 서보3 (-)
+        if (downPressed) angle3 = constrain(angle3 + SERVO_STEP_FAST, 0, 180); // 서보3 (+)
+        if (rightPressed) angle4 = constrain(angle4 + SERVO_STEP_FAST, 0, 180); // 서보4 (+)
+        if (leftPressed) angle4 = constrain(angle4 - SERVO_STEP_FAST, 0, 180); // 서보4 (-)
+        if (ePressed) angle5 = constrain(angle5 - SERVO_STEP_FAST, 0, 180); // 서보5 (-)
+        if (fPressed) angle5 = constrain(angle5 + SERVO_STEP_FAST, 0, 180); // 서보5 (+)
+
+        // 서보모터 이동
+        servo1.write(angle1);
+        servo2.write(angle2);
+        servo3.write(angle3);
+        servo4.write(angle4);
+        servo5.write(angle5);
+
+        // 시리얼 모니터 출력
+        Serial.print("Joystick X: ");
+        Serial.print(joyX);
+        Serial.print(" | Servo1 Angle: ");
+        Serial.print(angle1);
+        Serial.print(" || Joystick Y: ");
+        Serial.print(joyY);
+        Serial.print(" | Servo2 Angle: ");
+        Serial.print(angle2);
+        Serial.print(" || Servo3 Angle: ");
+        Serial.print(angle3);
+        Serial.print(" | Servo4 Angle: ");
+        Serial.print(angle4);
+        Serial.print(" | Servo5 Angle: ");
+        Serial.println(angle5);
+    }
+
+    // 서보1,2는 느리게 움직이고, 서보3,4,5는 빠르게 움직임
+    delay(DELAY_TIME_SLOW);  // 서보1,2: 40ms 간격 (기존보다 느려짐)
+    delay(DELAY_TIME_FAST);  // 서보3,4,5: 10ms 간격 (기존보다 빠름)
+}
