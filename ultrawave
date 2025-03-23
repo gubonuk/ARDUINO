@@ -1,0 +1,146 @@
+/*
+ * 아두이노 초음파 센서 3개 제어 코드
+ * 이 코드는 3개의 HC-SR04 초음파 센서를 아두이노에 연결하여 거리를 측정합니다.
+ */
+
+// 핀 정의
+// 센서 1
+const int trigPin1 = 2;  // 첫 번째 센서의 Trig 핀
+const int echoPin1 = 3;  // 첫 번째 센서의 Echo 핀
+
+// 센서 2 
+const int trigPin2 = 4;  // 두 번째 센서의 Trig 핀
+const int echoPin2 = 5;  // 두 번째 센서의 Echo 핀
+
+// 센서 3
+const int trigPin3 = 6;  // 세 번째 센서의 Trig 핀
+const int echoPin3 = 7;  // 세 번째 센서의 Echo 핀
+
+// 변수
+long duration1, duration2, duration3;  // 초음파 신호의 왕복 시간
+int distance1, distance2, distance3;   // 계산된 거리 (cm)
+
+void setup() {
+  // 시리얼 통신 초기화
+  Serial.begin(9600);
+  
+  // 핀 모드 설정
+  pinMode(trigPin1, OUTPUT);
+  pinMode(echoPin1, INPUT);
+  
+  pinMode(trigPin2, OUTPUT);
+  pinMode(echoPin2, INPUT);
+  
+  pinMode(trigPin3, OUTPUT);
+  pinMode(echoPin3, INPUT);
+}
+
+void loop() {
+  // 첫 번째 센서 측정
+  distance1 = measureDistance(trigPin1, echoPin1);
+  Serial.print("센서 1: ");
+  Serial.print(distance1);
+  Serial.println(" cm");
+  // 첫 번째 센서 데이터 처리
+  handleSingleSensor(1, distance1);
+  // 첫 번째 센서와 두 번째 센서 사이 대기 시간
+  delay(100);
+  
+  // 두 번째 센서 측정
+  distance2 = measureDistance(trigPin2, echoPin2);
+  Serial.print("센서 2: ");
+  Serial.print(distance2);
+  Serial.println(" cm");
+  // 두 번째 센서 데이터 처리
+  handleSingleSensor(2, distance2);
+  // 두 번째 센서와 세 번째 센서 사이 대기 시간
+  delay(100);
+  
+  // 세 번째 센서 측정
+  distance3 = measureDistance(trigPin3, echoPin3);
+  Serial.print("센서 3: ");
+  Serial.print(distance3);
+  Serial.println(" cm");
+  // 세 번째 센서 데이터 처리
+  handleSingleSensor(3, distance3);
+  
+  // 모든 센서 데이터 통합 처리
+  handleAllSensorData(distance1, distance2, distance3);
+  
+  // 다음 측정 사이클 전 대기 시간
+  Serial.println("-------------------");
+  delay(300);
+}
+
+// 거리 측정 함수
+int measureDistance(int trigPin, int echoPin) {
+  // 초음파 센서 초기화
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  
+  // 초음파 신호 발사 (10µs 동안 HIGH)
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  
+  // 반사된 신호가 돌아오는 시간 측정
+  long duration = pulseIn(echoPin, HIGH);
+  
+  // 거리 계산 (음속은 약 340m/s, 왕복이므로 2로 나눔)
+  // 거리(cm) = 시간(µs) × 0.034 ÷ 2
+  int distance = duration * 0.034 / 2;
+  
+  return distance;
+}
+
+// 개별 센서 데이터 처리 함수
+void handleSingleSensor(int sensorNum, int distance) {
+  const int threshold = 20; // 장애물 감지 임계값 (cm)
+  
+  // 장애물 감지 시 동작
+  if (distance < threshold) {
+    Serial.print("센서 ");
+    Serial.print(sensorNum);
+    Serial.println(": 장애물 감지!");
+    
+    // 센서별 특정 동작 수행
+    switch(sensorNum) {
+      case 1:
+        // 센서 1에 대한 동작
+        // 예: digitalWrite(ledPin1, HIGH);
+        break;
+      case 2:
+        // 센서 2에 대한 동작
+        // 예: digitalWrite(ledPin2, HIGH);
+        break;
+      case 3:
+        // 센서 3에 대한 동작
+        // 예: digitalWrite(ledPin3, HIGH);
+        break;
+    }
+  }
+}
+
+// 모든 센서 데이터 통합 처리 함수
+void handleAllSensorData(int dist1, int dist2, int dist3) {
+  const int threshold = 20; // 장애물 감지 임계값 (cm)
+  
+  // 여러 센서의 데이터를 종합적으로 분석하여 동작 결정
+  
+  // 모든 센서가 장애물을 감지한 경우
+  if (dist1 < threshold && dist2 < threshold && dist3 < threshold) {
+    Serial.println("모든 방향에 장애물 감지 - 정지");
+    // 예: 모터 정지 또는 경고음 울리기
+  } 
+  // 모든 센서가 장애물을 감지하지 않을 경우
+  else if (dist1 >= threshold && dist2 >= threshold && dist3 >= threshold) {
+    Serial.println("장애물 없음 - 정상 진행");
+    // 정상 동작 수행
+    // 예: 모든 LED 끄기 또는 전진 모드
+  }
+  // 일부 센서만 장애물 감지
+  else {
+    Serial.println("일부 방향에 장애물 - 회피 동작 필요");
+    // 회피 알고리즘 실행
+  }
+}
